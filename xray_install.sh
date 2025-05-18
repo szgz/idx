@@ -12,7 +12,7 @@ PORT="32156"
 XRAY_DIR="/usr/local/xray"
 XRAY_BIN="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
-LISTEN_ADDR="127.0.0.1"  # Cloudflare Tunnel 模式仅监听本地
+LISTEN_ADDR="127.0.0.1"  # Cloudflare Tunnel 模式下只监听本地
 
 # ====== Cloudflare Tunnel Token（你提供的）======
 CF_TUNNEL_TOKEN='eyJhIjoiYTlkMmY1NzJiYTRiMzNlYTY4OWQ4Y2Q2MzMxNWZiN2MiLCJ0IjoiNzU2YTBkMzctNjNiZC00ODAxLTkyNDItZjJkOWU5Y2IwYjQyIiwicyI6Ik4ySmxObVl4WkdRdFlqRXpNeTAwWmpBekxUazJPRFV0WkdKbFpURmlNbU01TW1ReCJ9'
@@ -71,7 +71,7 @@ sudo tee "$XRAY_CONFIG" > /dev/null <<EOF
 EOF
 
 # ====== 配置 Xray systemd 服务 ======
-echo "🔧 配置 systemd 服务..."
+echo "🔧 配置 Xray systemd 服务..."
 sudo tee /etc/systemd/system/xray.service > /dev/null <<EOF
 [Unit]
 Description=Xray Reality Service
@@ -97,16 +97,16 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudf
 sudo apt update -y
 sudo apt install -y cloudflared
 
-# ====== 注册并安装 tunnel ======
-echo "🔗 注册并绑定 tunnel..."
-sudo cloudflared service install "$CF_TUNNEL_TOKEN"
+# ====== 注册 Tunnel（先用 token注册，后续会更新服务文件）=====
+echo "🔗 注册并绑定 Tunnel（使用 token 模式进行初次注册）..."
+sudo cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN" || true
 
 # ====== 自动提取 Tunnel ID 和凭证路径 ======
 TUNNEL_ID=$(basename /etc/cloudflared/*.json | cut -d. -f1)
 CF_CRED_FILE="/etc/cloudflared/$TUNNEL_ID.json"
 
-# ====== 写入 cloudflared 配置并建立映射 ======
-echo "⚙️ 写入 Cloudflared 配置..."
+# ====== 写入 cloudflared 配置文件 ======
+echo "⚙️ 写入 Cloudflared 配置文件..."
 sudo mkdir -p /etc/cloudflared
 sudo tee /etc/cloudflared/config.yml > /dev/null <<EOF
 tunnel: $TUNNEL_ID
@@ -118,13 +118,32 @@ ingress:
   - service: http_status:404
 EOF
 
-# ====== 重启 cloudflared 隧道 ======
+# ====== 更新 Cloudflared systemd 服务文件以使用配置 ======
+echo "🔧 更新 Cloudflared systemd 服务文件..."
+sudo tee /etc/systemd/system/cloudflared.service > /dev/null <<EOF
+[Unit]
+Description=cloudflared Tunnel Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/cloudflared tunnel --config /etc/cloudflared/config.yml run
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable cloudflared
 sudo systemctl restart cloudflared
 
 # ====== 展示部署信息 ======
 echo ""
 echo "✅ 所有部署已完成！"
-echo "🌐 Cloudflare 隧道地址: idx.frankdevcn.dpdns.org"
+echo "🌐 Cloudflare 隧道域名: idx.frankdevcn.dpdns.org"
 echo "🧩 Reality 本地监听: $LISTEN_ADDR:$PORT"
 echo "🆔 UUID: $UUID"
 echo "🔑 Short ID: $SHORT_ID"
