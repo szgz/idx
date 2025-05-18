@@ -2,64 +2,53 @@
 
 set -e
 
-XRAY_DIR="/usr/local/xray"
-XRAY_BIN="$XRAY_DIR/xray"
-XRAY_CONFIG="$XRAY_DIR/config.json"
-LISTEN_MODE="$1"  # 参数: local 或 public
-
-# 自动判断监听地址
-if [[ "$LISTEN_MODE" == "public" ]]; then
-  LISTEN_ADDR="0.0.0.0"
-else
-  LISTEN_ADDR="127.0.0.1"
-fi
-
-# Reality 基本参数
+# ====== Reality 参数配置 ======
 UUID="8db9caf1-82d1-4d68-a1d0-6c2ad861e530"
 SHORT_ID="d99b"
 DEST="www.microsoft.com"
 FINGERPRINT="chrome"
 PRIVATE_KEY="2OqnjrVB7X-ZoWQyREceSl-gFjZxRGQvWkgdJQzHB20"
 PORT="32156"
+XRAY_DIR="/usr/local/xray"
+XRAY_BIN="$XRAY_DIR/xray"
+XRAY_CONFIG="$XRAY_DIR/config.json"
+LISTEN_ADDR="127.0.0.1"  # 仅监听本地，供 cloudflared 隧道使用
 
-# 安装依赖
+# ====== Cloudflare Tunnel Token（你提供的）======
+CF_TUNNEL_TOKEN='eyJhIjoiYTlkMmY1NzJiYTRiMzNlYTY4OWQ4Y2Q2MzMxNWZiN2MiLCJ0IjoiNzU2YTBkMzctNjNiZC00ODAxLTkyNDItZjJkOWU5Y2IwYjQyIiwicyI6Ik4ySmxObVl4WkdRdFlqRXpNeTAwWmpBekxUazJPRFV0WkdKbFpURmlNbU01TW1ReCJ9'
+
+# ====== 安装依赖 ======
+echo "📦 安装依赖..."
 sudo apt update -y
 sudo apt install -y unzip curl wget
 
-# 下载并解压 Xray
+# ====== 安装 Xray ======
+echo "⬇️ 下载并安装 Xray..."
 sudo mkdir -p "$XRAY_DIR"
 cd "$XRAY_DIR"
 sudo wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
 sudo unzip -o xray.zip
 sudo chmod +x xray
 
-# 生成公钥
+echo "🔐 生成 Reality 公钥..."
 PUB_KEY=$(sudo "$XRAY_BIN" x25519 -i "$PRIVATE_KEY" | grep "Public key" | awk '{print $3}')
 if [[ -z "$PUB_KEY" ]]; then
   echo "❌ 公钥生成失败"
   exit 1
 fi
 
-echo "🔑 公钥: $PUB_KEY"
-
-# 写入配置文件
+# ====== 写入 Xray 配置 ======
+echo "⚙️ 写入 Xray 配置..."
 sudo tee "$XRAY_CONFIG" > /dev/null <<EOF
 {
-  "log": {
-    "loglevel": "warning"
-  },
+  "log": { "loglevel": "warning" },
   "inbounds": [
     {
       "listen": "$LISTEN_ADDR",
       "port": $PORT,
       "protocol": "vless",
       "settings": {
-        "clients": [
-          {
-            "id": "$UUID",
-            "flow": "xtls-rprx-vision"
-          }
-        ],
+        "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
         "decryption": "none"
       },
       "streamSettings": {
@@ -77,23 +66,15 @@ sudo tee "$XRAY_CONFIG" > /dev/null <<EOF
       }
     }
   ],
-  "outbounds": [
-    {
-      "protocol": "freedom"
-    },
-    {
-      "protocol": "blackhole",
-      "settings": {},
-      "tag": "blocked"
-    }
-  ]
+  "outbounds": [{ "protocol": "freedom" }, { "protocol": "blackhole", "tag": "blocked" }]
 }
 EOF
 
-# 写入 systemd 服务
+# ====== 配置 Xray systemd 服务 ======
+echo "🔧 配置 systemd 服务..."
 sudo tee /etc/systemd/system/xray.service > /dev/null <<EOF
 [Unit]
-Description=Xray Service
+Description=Xray Reality Service
 After=network.target
 
 [Service]
@@ -104,13 +85,45 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-# 启动服务
-sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable xray
 sudo systemctl restart xray
 
-echo "✅ Xray Reality 启动成功，监听 $LISTEN_ADDR:$PORT"
-echo "👉 UUID: $UUID"
-echo "👉 Short ID: $SHORT_ID"
-echo "👉 Public Key: $PUB_KEY"
+# ====== 安装 Cloudflared ======
+echo "☁️ 安装 Cloudflared..."
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update -y
+sudo apt install -y cloudflared
+
+# ====== 注册并安装 tunnel ======
+echo "🔗 注册并绑定 tunnel..."
+sudo cloudflared service install "$CF_TUNNEL_TOKEN"
+
+# ====== 自动提取 Tunnel ID 和 Credentials 路径 ======
+TUNNEL_ID=$(basename /etc/cloudflared/*.json | cut -d. -f1)
+CF_CRED_FILE="/etc/cloudflared/$TUNNEL_ID.json"
+
+# ====== 写入 config.yml 映射端口到 Reality ======
+echo "⚙️ 写入 Cloudflared 配置文件..."
+sudo tee /etc/cloudflared/config.yml > /dev/null <<EOF
+tunnel: $TUNNEL_ID
+credentials-file: $CF_CRED_FILE
+
+ingress:
+  - hostname: idx.frankdevcn.dpdns.org
+    service: tcp://127.0.0.1:$PORT
+  - service: http_status:404
+EOF
+
+# ====== 重启 cloudflared ======
+sudo systemctl restart cloudflared
+
+# ====== 显示结果 ======
+echo "✅ 所有部署已完成！"
+echo "🌐 Cloudflare 隧道地址: idx.frankdevcn.dpdns.org"
+echo "🧩 Xray Reality 监听: $LISTEN_ADDR:$PORT"
+echo "🔑 UUID: $UUID"
+echo "🔑 Short ID: $SHORT_ID"
+echo "🔑 Public Key: $PUB_KEY"
