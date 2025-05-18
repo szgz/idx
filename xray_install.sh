@@ -12,7 +12,7 @@ PORT="32156"
 XRAY_DIR="/usr/local/xray"
 XRAY_BIN="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
-LISTEN_ADDR="127.0.0.1"  # 仅监听本地，供 cloudflared 隧道使用
+LISTEN_ADDR="127.0.0.1"  # Cloudflare Tunnel 模式仅监听本地
 
 # ====== Cloudflare Tunnel Token（你提供的）======
 CF_TUNNEL_TOKEN='eyJhIjoiYTlkMmY1NzJiYTRiMzNlYTY4OWQ4Y2Q2MzMxNWZiN2MiLCJ0IjoiNzU2YTBkMzctNjNiZC00ODAxLTkyNDItZjJkOWU5Y2IwYjQyIiwicyI6Ik4ySmxObVl4WkdRdFlqRXpNeTAwWmpBekxUazJPRFV0WkdKbFpURmlNbU01TW1ReCJ9'
@@ -101,12 +101,13 @@ sudo apt install -y cloudflared
 echo "🔗 注册并绑定 tunnel..."
 sudo cloudflared service install "$CF_TUNNEL_TOKEN"
 
-# ====== 自动提取 Tunnel ID 和 Credentials 路径 ======
+# ====== 自动提取 Tunnel ID 和凭证路径 ======
 TUNNEL_ID=$(basename /etc/cloudflared/*.json | cut -d. -f1)
 CF_CRED_FILE="/etc/cloudflared/$TUNNEL_ID.json"
 
-# ====== 写入 config.yml 映射端口到 Reality ======
-echo "⚙️ 写入 Cloudflared 配置文件..."
+# ====== 写入 cloudflared 配置并建立映射 ======
+echo "⚙️ 写入 Cloudflared 配置..."
+sudo mkdir -p /etc/cloudflared
 sudo tee /etc/cloudflared/config.yml > /dev/null <<EOF
 tunnel: $TUNNEL_ID
 credentials-file: $CF_CRED_FILE
@@ -117,13 +118,14 @@ ingress:
   - service: http_status:404
 EOF
 
-# ====== 重启 cloudflared ======
+# ====== 重启 cloudflared 隧道 ======
 sudo systemctl restart cloudflared
 
-# ====== 显示结果 ======
+# ====== 展示部署信息 ======
+echo ""
 echo "✅ 所有部署已完成！"
 echo "🌐 Cloudflare 隧道地址: idx.frankdevcn.dpdns.org"
-echo "🧩 Xray Reality 监听: $LISTEN_ADDR:$PORT"
-echo "🔑 UUID: $UUID"
+echo "🧩 Reality 本地监听: $LISTEN_ADDR:$PORT"
+echo "🆔 UUID: $UUID"
 echo "🔑 Short ID: $SHORT_ID"
-echo "🔑 Public Key: $PUB_KEY"
+echo "🔐 Public Key: $PUB_KEY"
