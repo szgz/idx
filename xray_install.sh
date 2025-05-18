@@ -97,14 +97,24 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudf
 sudo apt update -y
 sudo apt install -y cloudflared
 
-# ====== 安装并注册 Tunnel（新版推荐方式）=====
+# ====== 清理旧的 YAML 配置文件以避免报错 ======
+echo "🧹 清理旧的 /etc/cloudflared/config.yml（如果存在）..."
+sudo rm -f /etc/cloudflared/config.yml
+
+# ====== 使用 token 注册并创建服务 ======
 echo "🔗 注册并安装 Cloudflare Tunnel 服务..."
 sudo cloudflared service install "$CF_TUNNEL_TOKEN"
+
+# ====== 确认服务运行状态 ======
+echo ""
+sudo systemctl restart cloudflared
+sleep 2
+sudo systemctl status cloudflared --no-pager
 
 # ====== 展示部署信息 ======
 echo ""
 echo "✅ 所有部署已完成！"
-echo "🌐 Cloudflare 隧道自动配置并注册完成（无需手动配置 config.yml）"
+echo "🌐 Cloudflare 隧道自动配置并注册完成（无需手动 config.yml）"
 echo "🧩 Reality 本地监听: $LISTEN_ADDR:$PORT"
 echo "🆔 UUID: $UUID"
 echo "🔑 Short ID: $SHORT_ID"
